@@ -117,13 +117,15 @@ function loadPlugin(opts = {}) {
 const serves = (p) => p.execs.filter((e) => e.args[0] === "serve");
 const stops = (p) => p.execs.filter((e) => e.args[0] === "stop");
 
-test("menu item opens the sidebar and starts a cast", () => {
+test("menu item opens the sidebar without starting a cast", () => {
   const p = loadPlugin();
   p.clickMenu();
   assert.equal(p.loadedFile(), "sidebar.html");
   assert.equal(p.shown(), 1);
-  assert.equal(serves(p).length, 1);
-  assert.match(serves(p)[0].bin, /\/bin\/airplay-helper$/);
+  assert.equal(serves(p).length, 0);
+  assert.equal(p.flags.mute, false);
+  p.send("getState");
+  assert.equal(p.state().phase, "idle");
 });
 
 // Issue #20: Info.json declares a sidebarTab, so IINA shows an "AirPlay" tab
@@ -151,6 +153,7 @@ test("a plugin loaded before the window loads the sidebar page on window-loaded"
 
 test("the menu item shows the already-loaded page instead of reloading it", () => {
   const p = loadPlugin();
+  p.send("start");
   p.clickMenu();
   assert.equal(p.loads(), 1, "a reload would tear down the page's <video> mid-cast");
   assert.equal(p.shown(), 1);
@@ -159,7 +162,7 @@ test("the menu item shows the already-loaded page instead of reloading it", () =
 
 test("the page can start a cast after stopping, without reloading the plugin", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   assert.equal(serves(p).length, 1);
 
   p.send("stop", {});
@@ -173,7 +176,7 @@ test("the page can start a cast after stopping, without reloading the plugin", (
 
 test("start is a no-op while a cast is already running", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.send("start", {});
   assert.equal(serves(p).length, 1);
 });
@@ -186,7 +189,7 @@ const baseTracks = [
 test("serve args carry -smap/-sublang/-subname for an embedded text sub", () => {
   const p = loadPlugin({ tracks: [...baseTracks,
     { type: "sub", selected: true, codec: "subrip", "ff-index": 2, lang: "en", title: "English" }] });
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   const i = args.indexOf("-smap");
   assert.notEqual(i, -1);
@@ -200,7 +203,7 @@ test("serve args carry -subpath for an external sub, not -smap", () => {
   const p = loadPlugin({ tracks: [...baseTracks,
     { type: "sub", selected: true, codec: "subrip", "ff-index": 2,
       external: true, "external-filename": "/subs/en.srt", lang: "en" }] });
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   assert.equal(args[args.indexOf("-subpath") + 1], "/subs/en.srt");
   assert.equal(args.indexOf("-smap"), -1);
@@ -209,7 +212,7 @@ test("serve args carry -subpath for an external sub, not -smap", () => {
 test("image subs cast without subs and OSD the reason", () => {
   const p = loadPlugin({ tracks: [...baseTracks,
     { type: "sub", selected: true, codec: "hdmv_pgs_subtitle", "ff-index": 2 }] });
-  p.clickMenu();
+  p.send("start");
   assert.equal(serves(p).length, 1, "cast must still start");
   const args = serves(p)[0].args;
   assert.equal(args.indexOf("-smap"), -1);
@@ -219,7 +222,7 @@ test("image subs cast without subs and OSD the reason", () => {
 
 test("no sub flags when no sub is selected", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   assert.equal(args.indexOf("-smap"), -1);
   assert.equal(args.indexOf("-subpath"), -1);
@@ -230,7 +233,7 @@ test("a broken install names the fix instead of leaking an exec error", async ()
   // Exit 3 is resolveBinDir's signal for "found the plugin, but its binaries
   // are missing or not executable" — a hand-copied or quarantined install.
   const p = loadPlugin({ binDirLookup: { status: 3, stdout: "" } });
-  p.clickMenu();
+  p.send("start");
   await new Promise((r) => setImmediate(r)); // let the exec promise settle
   p.send("getState", {}); // simulate the page's poll to read the async result
   const s = p.state();
@@ -242,7 +245,7 @@ test("a broken install names the fix instead of leaking an exec error", async ()
 
 test("a network stream is declined with the stream-specific message, not silently absolute-path-rejected", () => {
   const p = loadPlugin({ path: "http://192.168.1.5:8080/video.mp4" });
-  p.clickMenu();
+  p.send("start");
   assert.ok(p.osd.some(m => /network stream/i.test(m)), "expected an OSD naming network streams");
   assert.equal(serves(p).length, 0, "a network stream must not spawn the helper");
   p.send("getState", {});
@@ -252,7 +255,7 @@ test("a network stream is declined with the stream-specific message, not silentl
 
 test("a relative path gets the local-file-path message, not the network-stream one", () => {
   const p = loadPlugin({ path: "movie.mkv" });
-  p.clickMenu();
+  p.send("start");
   assert.ok(p.osd.some(m => /local file path/i.test(m)), "expected an OSD naming the local-file-path problem");
   assert.ok(!p.osd.some(m => /network stream/i.test(m)), "a relative path is not a network stream");
   assert.equal(serves(p).length, 0, "a relative path must not spawn the helper");
@@ -263,7 +266,7 @@ test("a relative path gets the local-file-path message, not the network-stream o
 
 test("nothing playing sets the error state too, not just the OSD", () => {
   const p = loadPlugin({ path: null });
-  p.clickMenu();
+  p.send("start");
   assert.ok(p.osd.some(m => /nothing is playing/i.test(m)));
   assert.equal(serves(p).length, 0);
   p.send("getState", {});
@@ -273,7 +276,7 @@ test("nothing playing sets the error state too, not just the OSD", () => {
 
 test("no castable tracks sets the error state too, not just the OSD", () => {
   const p = loadPlugin({ tracks: [] });
-  p.clickMenu();
+  p.send("start");
   assert.ok(p.osd.some(m => /no castable video\/audio tracks/i.test(m)));
   assert.equal(serves(p).length, 0);
   p.send("getState", {});
@@ -283,7 +286,7 @@ test("no castable tracks sets the error state too, not just the OSD", () => {
 
 test("a file:// URI is normalized and cast, not declined as a network stream", () => {
   const p = loadPlugin({ path: "file:///movies/a.mkv" });
-  p.clickMenu();
+  p.send("start");
   assert.equal(serves(p).length, 1, "a file:// URI names a real local file that should be castable");
   assert.ok(!p.osd.some(m => /network stream/i.test(m)), "file:// must not be mislabelled a network stream");
 });
@@ -292,14 +295,14 @@ test("a file:// URI is normalized and cast, not declined as a network stream", (
 
 test("starting a cast mutes mpv and does NOT pause it", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   assert.deepEqual(p.sets.filter(([k]) => k === "mute").at(-1), ["mute", true]);
   assert.equal(p.flags.pause, false, "the muted mirror replaced core.pause()");
 });
 
 test("state posts carry the sync block while casting, null when idle", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.send("getState", {});
   assert.deepEqual(p.state().sync,
     { seq: 0, paused: false, seekTo: null, startPos: 42 });
@@ -309,14 +312,14 @@ test("state posts carry the sync block while casting, null when idle", () => {
 
 test("stop restores the pre-cast mute flag (false case)", () => {
   const p = loadPlugin({ mute: false });
-  p.clickMenu();
+  p.send("start");
   p.send("stop", {});
   assert.equal(p.flags.mute, false);
 });
 
 test("stop preserves a user's pre-cast mute (true case)", () => {
   const p = loadPlugin({ mute: true });
-  p.clickMenu();
+  p.send("start");
   assert.equal(p.flags.mute, true, "muting an already-muted mpv is fine");
   p.send("stop", {});
   assert.equal(p.flags.mute, true, "the user's own mute must survive the cast");
@@ -324,7 +327,7 @@ test("stop preserves a user's pre-cast mute (true case)", () => {
 
 test("an mpv pause bumps the sync seq and desired state", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.flags.pause = true;
   p.fire("mpv.pause.changed");
   p.send("getState", {});
@@ -334,7 +337,7 @@ test("an mpv pause bumps the sync seq and desired state", () => {
 
 test("an mpv seek becomes a seekTo command", () => {
   const p = loadPlugin({ timePos: 300 });
-  p.clickMenu();
+  p.send("start");
   p.fire("mpv.seek");
   p.send("getState", {});
   assert.deepEqual(p.state().sync.seekTo, { seq: 1, pos: 300 });
@@ -342,21 +345,21 @@ test("an mpv seek becomes a seekTo command", () => {
 
 test("a TV-remote pause is mirrored into mpv", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.send("tvState", { appliedSeq: 0, pos: 42, paused: true, wireless: true, ended: false });
   assert.deepEqual(p.sets.filter(([k]) => k === "pause").at(-1), ["pause", true]);
 });
 
 test("drift beyond tolerance corrects mpv's clock to the TV's", () => {
   const p = loadPlugin({ timePos: 42 });
-  p.clickMenu();
+  p.send("start");
   p.send("tvState", { appliedSeq: 0, pos: 50, paused: false, wireless: true, ended: false });
   assert.deepEqual(p.sets.filter(([k]) => k === "time-pos").at(-1), ["time-pos", 50]);
 });
 
 test("tvState.ended tears the cast down and restores mute", () => {
   const p = loadPlugin({ mute: false });
-  p.clickMenu();
+  p.send("start");
   p.send("tvState", { appliedSeq: 0, pos: 120, paused: false, wireless: true, ended: true });
   assert.equal(stops(p).length, 1);
   assert.equal(p.flags.mute, false);
@@ -366,7 +369,7 @@ test("tvState.ended tears the cast down and restores mute", () => {
 
 test("loading a new file during a cast tears it down", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.fire("iina.file-loaded");
   assert.equal(stops(p).length, 1);
   assert.equal(p.flags.mute, false);
@@ -381,7 +384,7 @@ test("file-loaded without a cast is a no-op", () => {
 test("a pre-handshake tvState must not un-pause a paused cast", () => {
   const p = loadPlugin();
   p.flags.pause = true;         // mpv is paused when the user starts the cast
-  p.clickMenu();
+  p.send("start");
   // appliedSeq -1 is what the page sends before its own seq-0 sync (carrying
   // the initial paused snapshot) has been applied: appliedSeq -1 < mirror.seq
   // 0 suspends reconciliation, so this pre-handshake tvState must not be
@@ -395,7 +398,7 @@ test("a pre-handshake tvState must not un-pause a paused cast", () => {
 
 test("the poll restores mute after the helper dies on its own", () => {
   const p = loadPlugin({ mute: false });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "stopped" });  // helper-initiated teardown: off-main, may not touch mpv
   assert.equal(p.flags.mute, true, "the exec callback itself must not touch mpv");
   p.send("getState", {});              // the next poll runs on-message: safe to restore
@@ -405,7 +408,7 @@ test("the poll restores mute after the helper dies on its own", () => {
 
 test("tvState reaps a stale mirror after the helper dies, before touching mpv", () => {
   const p = loadPlugin({ mute: false });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "stopped" }); // helper-initiated teardown: off-main, only state mutates
   p.send("tvState", { appliedSeq: 0, pos: 50, paused: false, wireless: true, ended: false });
   assert.equal(p.flags.mute, false, "tvState must reap the stale mirror and restore mute");
@@ -415,7 +418,7 @@ test("tvState reaps a stale mirror after the helper dies, before touching mpv", 
 
 test("restarting a cast after a helper-initiated teardown does not corrupt the saved mute", () => {
   const p = loadPlugin({ mute: false });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "stopped" });   // teardown lands off-main: only state mutates
   p.send("start", {});                   // restart before any getState poll ran
   p.send("stop", {});
@@ -424,7 +427,7 @@ test("restarting a cast after a helper-initiated teardown does not corrupt the s
 
 test("state carries duration and a subtitle label", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.send("getState", {}); // simulate the page's poll so a "state" message is posted
   const s = p.state();
   assert.equal(s.duration, 120);
@@ -437,14 +440,14 @@ test("state reports the selected subtitle track", () => {
     { type: "audio", selected: true, codec: "aac", "ff-index": 1, "demux-channel-count": 2 },
     { type: "sub", selected: true, codec: "subrip", "ff-index": 2, lang: "eng" },
   ] });
-  p.clickMenu();
+  p.send("start");
   p.send("getState", {}); // simulate the page's poll so a "state" message is posted
   assert.equal(p.state().subs.label, "Subtitles: eng");
 });
 
 test("subtitle label is available before any cast starts", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.send("stop");
   const s = p.state();
   assert.equal(s.phase, "idle");
@@ -457,14 +460,14 @@ test("subtitle label is available before any cast starts", () => {
 // decoded stream to announce the variant as HDR.
 test("serve args carry -vrange PQ when mpv decodes a PQ transfer", () => {
   const p = loadPlugin({ gamma: "pq" });
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   assert.equal(args[args.indexOf("-vrange") + 1], "PQ");
 });
 
 test("serve args carry -vrange HLG when mpv decodes an HLG transfer", () => {
   const p = loadPlugin({ gamma: "hlg" });
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   assert.equal(args[args.indexOf("-vrange") + 1], "HLG");
 });
@@ -472,20 +475,20 @@ test("serve args carry -vrange HLG when mpv decodes an HLG transfer", () => {
 test("serve args carry no -vrange for SDR or an unknown transfer", () => {
   for (const gamma of ["bt.1886", "auto", null]) {
     const p = loadPlugin({ gamma });
-    p.clickMenu();
+    p.send("start");
     assert.equal(serves(p)[0].args.indexOf("-vrange"), -1, `gamma ${gamma}`);
   }
 });
 
 test("serve args carry no -ip when the LAN address setting is empty", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   assert.equal(serves(p)[0].args.indexOf("-ip"), -1);
 });
 
 test("serve args carry -ip when the LAN address setting is set", () => {
   const p = loadPlugin({ lanIP: "192.168.1.20" });
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   const i = args.indexOf("-ip");
   assert.notEqual(i, -1, "expected -ip in serve args");
@@ -494,14 +497,14 @@ test("serve args carry -ip when the LAN address setting is set", () => {
 
 test("the LAN address setting is trimmed before it reaches the helper", () => {
   const p = loadPlugin({ lanIP: "  192.168.1.20 " });
-  p.clickMenu();
+  p.send("start");
   const args = serves(p)[0].args;
   assert.equal(args[args.indexOf("-ip") + 1], "192.168.1.20");
 });
 
 test("a whitespace-only LAN address setting means automatic", () => {
   const p = loadPlugin({ lanIP: "   " });
-  p.clickMenu();
+  p.send("start");
   assert.equal(serves(p)[0].args.indexOf("-ip"), -1);
 });
 
@@ -510,7 +513,7 @@ test("a whitespace-only LAN address setting means automatic", () => {
 // (JavascriptAPIUtils.swift, exec). Those empty chunks must not reach the log.
 test("empty helper stderr chunks are not logged", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   for (let i = 0; i < 3; i++) p.helperStderr("");
   p.helperStderr("\n");
   assert.deepEqual(p.logs.filter((l) => l.startsWith("[helper:stderr]")), []);
@@ -518,7 +521,7 @@ test("empty helper stderr chunks are not logged", () => {
 
 test("non-empty helper stderr is logged, trimmed", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.helperStderr("ffmpeg: something went wrong\n");
   assert.deepEqual(p.logs.filter((l) => l.startsWith("[helper:stderr]")),
     ["[helper:stderr] ffmpeg: something went wrong"]);
@@ -532,7 +535,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 
 test("the stream URL is logged when the helper reports ready", () => {
   const p = loadPlugin();
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "ready", url: STREAM });
   assert.ok(p.logs.some((l) => l.includes(STREAM)), "expected the stream URL in the log");
 });
@@ -540,7 +543,7 @@ test("the stream URL is logged when the helper reports ready", () => {
 test("a page media error probes the stream and reports why it failed", async () => {
   const p = loadPlugin({ curl: { status: 7, stdout: "000",
     stderr: "curl: (7) Failed to connect to 192.168.1.2 port 5000 after 1 ms: Couldn't connect to server" } });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "ready", url: STREAM });
   p.send("mediaError", { url: STREAM, code: 4 });
   assert.equal(curls(p).length, 1);
@@ -556,7 +559,7 @@ test("a page media error probes the stream and reports why it failed", async () 
 
 test("a curl that fails to run still leaves a diagnosis naming the URL", async () => {
   const p = loadPlugin({ curl: new Error("no such file") });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "ready", url: STREAM });
   p.send("mediaError", { url: STREAM, code: 4 });
   await tick();
@@ -566,7 +569,7 @@ test("a curl that fails to run still leaves a diagnosis naming the URL", async (
 
 test("a media error for a stream that is no longer current is ignored", () => {
   const p = loadPlugin({ curl: { status: 0, stdout: "200", stderr: "" } });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "ready", url: STREAM });
   p.send("mediaError", { url: "http://192.168.1.2:4000/master.m3u8", code: 4 });
   assert.equal(curls(p).length, 0);
@@ -574,11 +577,28 @@ test("a media error for a stream that is no longer current is ignored", () => {
 
 test("a probe that settles after the cast was stopped is dropped", async () => {
   const p = loadPlugin({ curl: { status: 0, stdout: "200", stderr: "" } });
-  p.clickMenu();
+  p.send("start");
   p.helperSays({ event: "ready", url: STREAM });
   p.send("mediaError", { url: STREAM, code: 4 });
   p.send("stop");
   await tick();
   p.send("getState");
   assert.equal(p.state().diag, null);
+});
+
+test("subtitles loaded after opening Cast to TV are included when starting", () => {
+  const tracks = [
+    { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
+    { type: "audio", selected: true, codec: "aac", "ff-index": 1 },
+  ];
+  const p = loadPlugin({ tracks });
+  p.clickMenu();
+  tracks.push({ type: "sub", selected: true, codec: "subrip", external: true,
+                "external-filename": "/movies/Justice Part 1.srt", lang: "eng" });
+  p.send("start");
+  assert.equal(serves(p).length, 1);
+  assert.match(serves(p)[0].bin, /\/bin\/airplay-helper$/);
+  const args = serves(p)[0].args;
+  assert.ok(args.includes("-subpath"), "the cast must include the newly loaded subtitles");
+  assert.equal(args[args.indexOf("-subpath") + 1], "/movies/Justice Part 1.srt");
 });

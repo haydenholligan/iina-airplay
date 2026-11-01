@@ -601,6 +601,7 @@ if (typeof iina !== "undefined") {
 
   menu.addItem(menu.item("Cast to TV", function () {
     openSidebar();  // main-thread menu callback: safe
-    startCast();    // helper events only mutate `state`; the page polls
+    // Capture tracks only when Start casting is pressed in the sidebar, so
+    // subtitles loaded after opening it are included in the stream.
   }));
 }

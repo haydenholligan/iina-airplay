@@ -75,9 +75,9 @@ plugin will tell you to reinstall through IINA when that happens.
 Play a file, then either:
 
 - pick **Plugins → AirPlay → Cast to TV** from the menu bar, or
-- open the sidebar's **Plugins** pane, choose the **AirPlay** tab, and press
-  **Start casting**.
+- open the sidebar's **Plugins** pane, choose the **AirPlay** tab.
 
+Load or select your subtitles in IINA, then press **Start casting** in the sidebar.
 The sidebar packages the file, then **Send to TV** opens the AirPlay picker.
 Pick the TV and IINA becomes the remote. The plugin's page under
 Settings → Plugins only enables it and shows its log; the cast controls are
